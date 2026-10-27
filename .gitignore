@@ -2,6 +2,7 @@
 materials/*
 !materials/.gitkeep
 build/
+runs/
 
 # Секреты: токены ботов и ключи API — только в файлах окружения вне git
 .env
