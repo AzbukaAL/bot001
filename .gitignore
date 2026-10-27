@@ -1,0 +1,32 @@
+# Данные заказчика и всё, что из них построено, — только на сервере, в git не попадают
+materials/*
+!materials/.gitkeep
+build/
+
+# Секреты: токены ботов и ключи API — только в файлах окружения вне git
+.env
+.env.*
+*.env
+
+# Журналы, разборы обращений, вызовы модели, индексы норм, кэш распознавания — где бы ни лежали
+*.log
+logs/
+*.jsonl
+llm_calls.jsonl
+razbor_*.json
+*_index.json
+*_index_v2.json
+*_access.json
+ocr/
+
+# Документы: материалы заказчика и выдачи бота (PDF/DOCX/ODT) в репозитории не хранятся
+*.pdf
+*.docx
+*.odt
+*.doc
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/

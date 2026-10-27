@@ -1,0 +1,12 @@
+[Unit]
+Description=Капитан Сэм — бот MAX (претензия → docx)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/captain-sam
+ExecStart=/usr/bin/python3 /opt/captain-sam/src/bot_max.py
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

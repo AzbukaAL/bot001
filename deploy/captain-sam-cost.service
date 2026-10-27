@@ -1,0 +1,7 @@
+[Unit]
+Description=Капитан Сэм: расход на модель за сутки — строка Вадиму (П-12, 17.10.2026)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/captain-sam
+ExecStart=/usr/bin/python3 /opt/captain-sam/src/daily_cost.py
