@@ -9,7 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 tag = sys.argv[1]; out = f"{ROOT}/build/index-fix"; os.makedirs(out, exist_ok=True)
 A.CALLS_LOG = f"{out}/calls_{tag}.jsonl"
 ET = json.load(open(f"{ROOT}/build/etalon_v2.json", encoding="utf-8"))
-todo = [e for e in ET if (e["id"].startswith("K") and e.get("verdict") is not None) or e["id"] == "P9–10"]
+todo = [e for e in ET if (e["id"].startswith("K") and e.get("verdict") is not None) or e["id"] in ("P9–10", "R01", "R02")]   # 21.10: + реальные кейсы
 res = []
 for e in todo:
     A.TRACE.clear(); t0 = time.time()

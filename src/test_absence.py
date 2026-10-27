@@ -43,7 +43,7 @@ check("причина инженеру", A.facts_why([("x", A.ABSENCE_WHY + " �
 
 # маршрут целиком (модель подменена)
 orig = (A.analyze, A.select_basis, A.write, A.judge)
-A.analyze = lambda c: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СК-ЧБ §7.4", "evidence": "", "cite": [], "reason": "",
+A.analyze = lambda c, obj=None: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СК-ЧБ §7.4", "evidence": "", "cite": [], "reason": "",
                        "counter_question": None, "usage": {}, "raw_verdict": 2, "norm_ids": [], "sk_ids": []}
 A.select_basis = lambda a: ([dict(b, ref=f"СК-X §{k}", label_engineer="СК", client_ok=True, mark=None) for k, b in enumerate(SK, 1)], [], {})
 BAD = {"conclusion": "Претензия подтверждается частично", "short": "Дверь с терморазрывом доступна как опция [3].",

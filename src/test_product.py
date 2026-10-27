@@ -39,7 +39,7 @@ check("причина инженеру", A.facts_why([("x", A.PRODUCT_WHY + " �
 # маршрут целиком (модель подменена): переписано → покупателю; не переписалось → инженеру с причиной
 CLAIM = "Входная дверь будет промерзать, нужна дверь с терморазрывом"
 orig = (A.analyze, A.select_basis, A.write, A.judge)
-A.analyze = lambda c: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СК-ЧБ §7.4", "evidence": "", "cite": ["СК-ЧБ §7.4"],
+A.analyze = lambda c, obj=None: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СК-ЧБ §7.4", "evidence": "", "cite": ["СК-ЧБ §7.4"],
                        "reason": "опция", "counter_question": None, "usage": {}, "raw_verdict": 2, "norm_ids": [], "sk_ids": ["СК-ЧБ §7.4"]}
 basis = [dict(b, ref=f"СК-ЧБ §7.{k}", label_engineer="СК", client_ok=True, mark=None) for k, b in enumerate(SK, 4)]
 A.select_basis = lambda a: (basis, [], {})

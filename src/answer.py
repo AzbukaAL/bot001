@@ -123,12 +123,15 @@ def _llm_once_traced(claim, cands, rcands=(), extra=""):
     log_call("verdict", "mechanical", R8.MODEL, R8.SYS, t0, u); return ans, u
 R8._llm_once = _llm_once_traced
 
-def analyze(claim_raw):
+def analyze(claim_raw, obj=None):
     """Вердикт по претензии — как в прогоне №8. Обезличивание ДО вызова модели."""
     claim, mapping = anonymize(claim_raw)
     c = R8.candidates(claim); rc = R8.reg_candidates(claim)
+    # 21.10: условие исключения нормы (тип системы, материал…) может стоять в данных проекта — модели вердикта их позиции по теме
+    proj = object_basis(claim, obj, k=3) if obj else []
+    claim_v = claim + ("\n\nДАННЫЕ ПРОЕКТА (документы компании, присланные сотрудником):\n" + "\n".join(f"- {b['quote']}" for b in proj) if proj else "")
     for n in range(3):   # сетевой сбой — повтор (логика вердикта №8 не меняется)
-        try: ans, u = R8.llm(claim, c, rc); USAGE.append(u); break
+        try: ans, u = R8.llm(claim_v, c, rc); USAGE.append(u); break
         except Exception as ex:
             ans, u = {"verdict": None, "cite": [], "reason": f"ошибка вызова {type(ex).__name__}"}, {}
             time.sleep(3 * (n + 1))
@@ -217,6 +220,19 @@ def extra_candidates(claim, k=3):
     sc = sorted(((R8.bm25(q, i), i) for i, p in enumerate(R8.PTS) if p[0].startswith(("СП 256", "ПУЭ"))), reverse=True)
     return [f"{R8.PTS[i][0]}|п.{R8.PTS[i][1]}" for s, i in sc[:k] if s > 0]
 
+EXC = re.compile(r"допускает\w*|не\s+требует\w*|за\s+исключением|\bкроме\b|\bвместо\b", re.I)
+NORM_QUOTE_MAX = 1200
+
+def norm_quote(ref, q):
+    """21.10 (решение Вадима, R02): цитата пункта нормы — целиком (до NORM_QUOTE_MAX); длиннее — выбранная часть плюс
+    обязательно предложения с исключением («допускается / не требуется / за исключением / кроме / вместо»), которых в ней нет.
+    Случай: СП 60 п. 6.2.16 — выбор взял 2 первых предложения, исключение «вместо спуска воды — продувка» осталось за бортом."""
+    full = PAGE_HEAD.sub("", norm_ws(source_text(ref))).strip()
+    if not full: return q
+    if len(full) <= NORM_QUOTE_MAX: return full
+    add = [x for x in re.split(r"(?<=[.;])\s+(?=[А-ЯЁA-Z])", full) if EXC.search(x) and norm_ws(x)[:60].lower() not in q.lower()]
+    return q + ("" if not add else " … " + " … ".join(add))
+
 def select_basis(a):
     norm = list(dict.fromkeys(a["norm_ids"][:8] + extra_candidates(a["claim"])))
     ids = [r for r in norm if source_text(r)] + [r for r in a["sk_ids"][:4] if source_text(r)]
@@ -232,6 +248,7 @@ def select_basis(a):
         q = full_sentence_quote(source_text(ref), b.get("quote", ""))
         if not q: rejected.append({"ref": ref, "why": "цитата не найдена в источнике дословно"}); continue
         q = trim_quote(ref, q, b.get("quote", ""), a["claim"])
+        if not ref.startswith("СК-") and ref not in VERIFIED: q = norm_quote(ref, q)   # 21.10: пункт целиком / с исключением
         ok, mark = client_usable(ref, q)
         chosen.append({"ref": ref, "label": label(ref), "label_engineer": label_engineer(ref), "quote": q,
                        "standard": ref.startswith("СК-"), "client_ok": ok, "mark": mark})
@@ -364,6 +381,12 @@ WRITE_SYS = """Ты — инженер строительной компании
 Ниже — пример стиля ответов инженера (там документы названы словами; ты вместо этого ставь маркеры)."""
 WRITE_SYS += R8.UNTRUSTED   # 17.10: П-19
 
+EXC_WRITE_RULE = """
+В ОСНОВАНИИ-НОРМЕ ЕСТЬ ИСКЛЮЧЕНИЕ («допускается…», «не требуется…», «за исключением…», «кроме…», «вместо…»). Если оно зависит
+от условия (тип системы, материал, этажность и т. п.), которого нет в данных проекта, — НЕ решай за покупателя: заполни
+need_project этим условием (например: «тип системы отопления (горизонтальная или вертикальная) и материал труб»), покупателя о нём
+не спрашивай. Если условие есть в данных проекта и выполняется — скажи, что норма допускает это решение, со ссылкой на цитату исключения."""
+
 OBJECT_RULE = """
 В ОСНОВАНИЯХ ЕСТЬ ДАННЫЕ ПРОЕКТА ПОКУПАТЕЛЯ (КП, опросный лист, теплотехнический расчёт) — пометка «данные Вашего проекта».
 Отвечай по ним: что именно заложено в его доме и что показывает расчёт его объекта.
@@ -447,6 +470,7 @@ def write(a, basis, calc, conclusions, extra=""):
             + (FEAR_RULE.format(fear=a["fear"]) if a.get("fear") else "") + (OPTION_RULE if any(x.get("option") for x in basis) else "")
             + (OBJECT_RULE if any(x.get("object") for x in basis) else "")
             + ("" if has_assertion(a["claim"]) else QUESTION_RULE)
+            + (EXC_WRITE_RULE if any(EXC.search(x.get("quote", "")) and not x.get("standard") and not x.get("object") for x in basis) else "")
             + (CALC_LIMIT_RULE if any(PHASE_OVER in l for l in calc) else "") + extra)
     t, u = chat(WRITE_SYS, user + style_block(), 900, role="language")   # 21.10: тон и ирония — настройка
     w = jparse(t, {})
@@ -518,14 +542,53 @@ PRODUCT = re.compile(r"\b(?:базов|подбира|подобран|соот�
 PART_SPLIT = re.compile(r"\s*;\s*|,?\s+(?:однако|но)\s+|^(?:однако|но)\s+", re.I)
 PRODUCT_WHY = "утверждение о продукте без основания"
 
+# 21.10 (решение Вадима): часть фразы, которая дословно или почти дословно есть в цитате основания этого пункта, —
+# подтверждена, даже без своей ссылки (деление по «;» оставляло «По желанию заказчика базовая дверь может быть заменена…»
+# без [2], хотя это дословно СК-ЧБ §7.4). «Почти»: после нормализации ≥ 90 % символов фрагмента совпадают с окном цитаты
+# вокруг самого длинного общего куска (выпало или заменено слово — проходит; разрозненные совпадения по длинной
+# цитате — нет); отрицание («не», «нет», «без»), которого нет в этом окне цитаты, — не подтверждено.
+VERBATIM_MIN = 0.90
+NEG = re.compile(r"\b(?:не|нет|без|ни)\b")
+
+def _vnorm(t):
+    return " ".join(re.sub(r"[^\w\s]", " ", R8.unhyph(norm_ws(t)).lower().replace("ё", "е")).split())
+
+def in_quote(part, basis):
+    """Фрагмент дословно / почти дословно в цитате одного из оснований пункта."""
+    import difflib
+    p = _vnorm(re.sub(r"\[(\d+|Р)\]", " ", part))
+    if len(p) < 20: return False
+    for b in basis:
+        q = _vnorm(b.get("quote", ""))
+        if not q: continue
+        if p in q: return True
+        m = difflib.SequenceMatcher(None, p, q, autojunk=False).find_longest_match(0, len(p), 0, len(q))
+        if m.size < 20: continue
+        w = q[max(0, m.b - m.a - 20):m.b + (len(p) - m.a) + 20]   # окно цитаты против всего фрагмента
+        same = sum(x.size for x in difflib.SequenceMatcher(None, p, w, autojunk=False).get_matching_blocks())
+        if same >= VERBATIM_MIN * len(p) and set(NEG.findall(p)) <= set(NEG.findall(w)): return True
+    return False
+
 def product_problems(w, basis):
     probs = []
     has_obj = any(b.get("object") for b in basis)
     for field in ("short", "reasoning", "action"):
         for s in sentences(w.get(field) or ""):
             for part in (x for x in PART_SPLIT.split(s) if x and x.strip()):
-                if re.search(r"\[(\d+|Р)\]", part) or not PRODUCT.search(part): continue
-                if has_obj and re.search(r"проект|КП|коммерческ", part, re.I) and not NUM.search(part): continue
+                if not PRODUCT.search(part): continue
+                bare = re.sub(r"\[(\d+|Р)\]", " ", part)   # 21.10: цифра ссылки «[1]» — не число утверждения
+                if has_obj and re.search(r"проект|КП|коммерческ", bare, re.I) and not NUM.search(bare): continue
+                if in_quote(part, basis): continue   # 21.10: дословно из цитаты основания
+                refs = [int(x) for x in re.findall(r"\[(\d+)\]", part) if 1 <= int(x) <= len(basis)]
+                if refs or "[Р]" in part:
+                    # 21.10 (решение Вадима): ссылка должна быть о том же предмете — основа слова «о продукте» («базов…»,
+                    # «подбир…») есть в цитате по ссылке; иначе как без основания (K061: «Базовая дверь выбирается с учётом
+                    # всех этих характеристик [1]», а [1] — СК-ЧБ §7.5 про двери вообще)
+                    quotes = " ".join(norm_ws(basis[r - 1].get("quote", "")).lower() for r in refs)
+                    miss = sorted({m.group(0).lower()[:5] for m in PRODUCT.finditer(part)} - {x for x in (m.group(0).lower()[:5] for m in PRODUCT.finditer(part)) if x in quotes})
+                    if not refs or not miss: continue
+                    probs.append((part.strip(), f"{PRODUCT_WHY} — в цитате [{', '.join(map(str, refs))}] нет «{', '.join(x + '…' for x in miss)}»: "
+                                                f"ссылка не о том же; убери эту часть или сошлись на основание о нём")); continue
                 probs.append((part.strip(), f"{PRODUCT_WHY} — убери эту часть или поставь ссылку на стандарт компании / данные проекта"))
     return probs
 
@@ -556,6 +619,7 @@ def absence_problems(w, basis):
                 words = ABS_WORD.findall(body[max(0, m.start() - 40):m.end() + 40].lower())
                 keys = {x[:5] for x in words if x not in ABS_STOP and not ABSENCE.fullmatch(x)}
                 ok = any(any(abs(a.start() - q.find(k)) <= 60 for a in ABSENCE.finditer(q) for k in keys if k in q) for q in quotes)
+                if not ok and in_quote(part, basis): ok = True   # 21.10: дословно из цитаты основания
                 if not ok: probs.append((part.strip(), f"{ABSENCE_WHY} — в основаниях это прямо не сказано; убери эту часть"))
     return probs
 
@@ -779,7 +843,7 @@ def empty_search(claim_raw, obj):
 
 def _answer(claim_raw, obj=None):
     """Претензия → {route: client|engineer, conclusion, reasoning, action, clarify, basis, calc, internal:{…}}."""
-    a = analyze(claim_raw); usage = [a.pop("usage")]
+    a = analyze(claim_raw, obj); usage = [a.pop("usage")]
     a["fear"] = fear_of(a["claim"])
     v = a["verdict"] if a["status"] == "ok" else None
     rv = a["raw_verdict"] if a["raw_verdict"] in (1, 2, 3) else None

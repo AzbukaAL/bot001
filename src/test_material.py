@@ -35,7 +35,7 @@ check("другой группы материал не мешает", A.material
 
 # маршрут целиком: _answer с подменённой моделью — K031 с прямым основанием СП 17 п. 7.8 уходит инженеру с причиной
 orig = (A.analyze, A.select_basis, A.write, A.judge)
-A.analyze = lambda c: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СП 17.13330.2017|п.7.8", "evidence": SP17_78[:200],
+A.analyze = lambda c, obj=None: {"claim": c, "mapping": {}, "verdict": 2, "status": "ok", "direct": "СП 17.13330.2017|п.7.8", "evidence": SP17_78[:200],
                        "cite": ["СП 17.13330.2017|п.7.8"], "reason": "крепление рассчитывают", "counter_question": None, "usage": {},
                        "raw_verdict": 2, "norm_ids": ["СП 17.13330.2017|п.7.8"], "sk_ids": []}
 A.select_basis = lambda a: ([{"ref": "СК-X §1", "label": "Стандарт компании", "label_engineer": "СК", "quote": "Крепление кровли рассчитывают на ветровую нагрузку.",
