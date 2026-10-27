@@ -141,13 +141,67 @@ def part_found(x, hay):
     и прямой ответ СП 50 п. 4.2 блокировался (K054, стеклопакет). Остаток — тот же порог длины, что у части."""
     if x in hay: return True
     y = LEAD.sub("", x, 1)
-    return y != x and len(y) >= 20 and y in hay
+    return y != x and len(y) >= 3 and y in hay   # 27.10: порог 20 снят — часть заменяется предложением источника (sentences_with)
+
+WORDRX = re.compile(r"[а-яёa-z]{3,}")
+SENT_END = re.compile(r"[.!?;]\s+(?=[А-ЯЁA-Z«(\d•-])")
+def sentences_with(src, parts):
+    """27.10 (решение Вадима, K030): части цитаты-доказательства, найденные дословно, → предложения источника, в которых они стоят,
+    в порядке источника, через « … ». Так проверка дословности не спотыкается об обрывки модели, а цитата остаётся дословной."""
+    S = unhyph(" ".join((src or "").split())); L = S.lower()
+    bounds = [0] + [m.end() for m in SENT_END.finditer(S)] + [len(S)]
+    spans = []
+    for x in parts:
+        i = L.find(x)
+        if i < 0:
+            y = LEAD.sub("", x, 1); i = L.find(y) if y != x else -1
+        if i < 0: continue
+        st = max(b for b in bounds if b <= i); en = min(b for b in bounds if b > i)
+        spans.append((st, en))
+    out = []
+    for st, en in sorted(set(spans)):
+        if out and st <= out[-1][1]: out[-1] = (out[-1][0], max(en, out[-1][1]))
+        else: out.append((st, en))
+    return " … ".join(S[st:en].strip() for st, en in out)
+
+MATERIALS = {
+    "кровля": {"фальцевая кровля (кляммеры)": r"\bкляммер\w*|\bфальцев\w*", "ондулин": r"\bондулин\w*|\bеврошифер\w*",
+               "металлочерепица": r"\bметаллочерепиц\w*", "профлист": r"\bпрофлист\w*|\bпрофнастил\w*|\bпрофилированн\w*\s+(?:стальн\w*\s+)?лист\w*",
+               "гибкая черепица": r"\b(?:гибк|битумн|мягк)\w*\s+черепиц\w*|\bмягк\w*\s+кровл\w*"},
+    "фасад": {"деревянная облицовка": r"\bдеревянн\w*\s+(?:облицовк|обшивк|сайдинг)\w*|\bимитаци\w*\s+брус\w*|\bблок[-\s]?хаус\w*|\bвагонк\w*|\bпланкен\w*",
+              "сайдинг": r"(?<!деревянный )(?<!деревянного )(?<!деревянным )\bсайдинг\w*"},
+}
+MAT_RX = {g: {m: re.compile(rx, re.I) for m, rx in d.items()} for g, d in MATERIALS.items()}
+
+def materials_in(text):
+    return {g: {m for m, rx in d.items() if rx.search(text or "")} for g, d in MAT_RX.items()}
+
+def subject_materials(claim):
+    """27.10 (решение Вадима, K041): материал-ПРЕДМЕТ замечания — в каждой группе тот, что назван в замечании первым
+    («виниловый сайдинг … в отличие от имитации бруса» → сайдинг). Упомянутые позже — сравнение, не предмет."""
+    out = {}
+    for g, d in MAT_RX.items():
+        hits = [(m.start(), name) for name, rx in d.items() for m in [rx.search(claim or "")] if m]
+        out[g] = {min(hits)[1]} if hits else set()
+    return out
+
+def other_material(have, text):
+    """Текст фрагмента называет материал группы, у которой в замечании есть предмет, и предмет не назван → «X вместо Y»; иначе None."""
+    for g, ms in materials_in(text).items():
+        if ms and have.get(g) and not (ms & have[g]): return f"{', '.join(sorted(ms))} вместо {', '.join(sorted(have[g]))}"
+    return None
 
 def llm(claim, cands, rcands=()):
     last = None
+    # 27.10 (решение Вадима, K041): материал-предмет замечания (+ материалы из ДАННЫХ ПРОЕКТА) — прямой фрагмент о другом материале
+    # той же группы не прямой ответ: такие фрагменты исключаются, вердикт запрашивается заново (одна попытка)
+    claim_part, _, proj_part = claim.partition("\n\nДАННЫЕ ПРОЕКТА")
+    have_mat = subject_materials(claim_part)
+    for g, ms in materials_in(proj_part).items(): have_mat[g] |= ms
     for attempt in range(2):                      # до 2 попыток: не-JSON или нарушение порядка (3/5 при прямом фрагменте)
         extra = "" if attempt == 0 else ("\n\nНАПОМИНАНИЕ: предыдущий ответ " + ("не был JSON" if last is None else
-                 ("нарушил порядок — при найденном прямом фрагменте вердикт 3/5 запрещён" if not last.get("evidence_fail") else
+                 (f"сослался на фрагмент о другом материале ({last['material_fail']}) — он исключён из фрагментов; выбери прямой ответ среди оставшихся или перейди к шагам б/в" if last.get("material_fail") else
+                 "нарушил порядок — при найденном прямом фрагменте вердикт 3/5 запрещён" if not last.get("evidence_fail") else
          "не подтвердил прямой ответ дословной цитатой из фрагмента — либо приведи точную цитату, либо это не прямой ответ")) + ". Ответь строго по шагам, только JSON.")
         ans, u = _llm_once(claim, cands, rcands, extra)
         if ans.get("verdict") is None:
@@ -158,14 +212,20 @@ def llm(claim, cands, rcands=()):
         if d not in ("", "None", "null") and ans.get("verdict") in (3, 5) and not exc_ok: last = ans; continue   # 21.10: 3 при исключении — можно
         if ans.get("verdict") in (1, 2) and d not in ("", "None", "null"):
             src = REG[d]["text"] if d in REG else next((PTS[i][2] for i in cands if f"{PTS[i][0]}|п.{PTS[i][1]}" == d), "")
+            om = other_material(have_mat, src)
+            if om and attempt == 0:   # 27.10 (K041): фрагмент о другом материале — исключить все такие и спросить заново
+                cands = [i for i in cands if not other_material(have_mat, PTS[i][2])]
+                rcands = [r for r in rcands if not other_material(have_mat, REG[r]["text"])]
+                ans["material_fail"] = om; last = ans; continue
             ev = str(ans.get("evidence") or "")
             parts = [unhyph(" ".join(x.lower().split())).strip("«»\"' .,;:") for x in re.split(r"\s*(?:…|\.\.\.)\s*", ev)]
-            parts = [x for x in parts if x]
+            parts = [x for x in parts if x and WORDRX.search(x)]   # 27.10: связка без слова («к», «и») не проверяется
             hay = unhyph(" ".join(src.lower().split()))
-            # №8: часть короче 20 символов — цитата отвергается; требование «≥3 слов» (№7) снято — ложно блокировало K054
-            short = any(len(x) < 20 for x in parts)
-            if not parts or short or any(not part_found(x, hay) for x in parts):
+            # 27.10 (решение Вадима, K030): порог 20 символов снят; часть не найдена дословно — цитата отвергается,
+            # найденные части заменяются предложениями источника (sentences_with) — проверяется и выдаётся предложение
+            if not parts or any(not part_found(x, hay) for x in parts):
                 ans["evidence_fail"] = True; last = ans; continue
+            ans["evidence"] = sentences_with(src, parts)
         ans["attempts"] = attempt + 1; return ans, u
     if last is not None:
         last["attempts"] = 2; last["order_violation"] = True; return last, u
@@ -193,6 +253,7 @@ def validate(ans, cands, rcands=()):
     if v not in TYPES: return None, "ОТВЕТ НЕ ВЫДАЁТСЯ: вердикт вне пяти типов", []
     if ans.get("order_violation"):
         return None, ("ОТВЕТ НЕ ВЫДАЁТСЯ: прямой ответ не подтверждён дословной цитатой" if ans.get("evidence_fail")
+                      else f"ОТВЕТ НЕ ВЫДАЁТСЯ: основание о другом материале: {ans['material_fail']}" if ans.get("material_fail")
                       else "ОТВЕТ НЕ ВЫДАЁТСЯ: нарушен порядок вердиктов (3/5 при прямом фрагменте)"), []
     # цитата — кодом из разобранного текста; из OCR — НЕ выдаётся без сверки с оригиналом (правило проекта 30.09)
     quotes = [(c, REG[c]["text"][:300] + " [стандарт компании]") if c in rcands else
