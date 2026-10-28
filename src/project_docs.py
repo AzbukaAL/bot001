@@ -14,7 +14,7 @@ import collections, json, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 17.10: свой src — копия ветки не исполняет боевой код
 from anonymize import anonymize
 import pdfplumber
-import object_index as OI
+import object_index as OI, base_versions as BV
 
 def A(t): return anonymize(" ".join((t or "").split()))[0]
 
@@ -269,8 +269,11 @@ def build_docs(paths):
     if not items: return None, docs
     srcs = "; ".join(dict.fromkeys(f"{d['kind']} от {d['date']}" if d["date"] else d["kind"] for d in docs if d["items"]))
     dates = [d["date"] for d in docs if d["items"] and d["date"]]
-    return {"label": f"Данные Вашего проекта ({srcs})", "date": "; ".join(dict.fromkeys(dates)) or None,
-            "sources": srcs, "items": items, "docs": docs}, docs
+    obj = {"label": f"Данные Вашего проекта ({srcs})", "date": "; ".join(dict.fromkeys(dates)) or None,
+           "sources": srcs, "items": items, "docs": docs}
+    try: obj = BV.attach(obj)   # 28.10: базовая комплектация нужной редакции (по дате объекта) или вопрос сотруднику
+    except Exception as e: obj["base"] = {"status": "сбой", "note": f"база не подключена: {type(e).__name__}"}
+    return obj, docs
 
 if __name__ == "__main__":
     obj, docs = build_docs(sys.argv[1:])

@@ -97,6 +97,12 @@ def project_object(paths):
     except Exception as e:
         log("данные проекта не разобраны:", type(e).__name__); return None, []
 
+def base_note(obj):
+    """28.10: базовая комплектация по данным проекта не определена — вопрос сотруднику отдельной строкой сводки (текущая база
+    по умолчанию не подставляется). Подключена или не нужна (ТО из договора) — пусто: подпись редакции уже в источниках."""
+    q = ((obj or {}).get("base") or {}).get("question")
+    return f"\nВопрос сотруднику по базовой комплектации: {q}" if q else ""
+
 def doc_names(paths):
     """Перечисление присланных файлов для сообщения: «опросный лист от 09.10.2026, теплотехнический расчёт от 15.10.2026»."""
     import project_docs as PD
@@ -154,7 +160,7 @@ def handle(text, docs=None, redo=False, claims=None, first=1, part=None):
                        ("\n" + CLAIM_BTN_HINT if any(not d["kind"] for d in bad) else "")   # 20.10: нераспознанный файл
     if not obj and not part: summary += "\n" + (KP_HINT if not docs else "Данные проекта не разобраны — ответ без них. " + KP_HINT)
     else:
-        summary += f"\nДанные проекта: {obj['sources']}."
+        summary += f"\nДанные проекта: {obj['sources']}." + base_note(obj)
         if mark: summary = f"Переделал ответ по проекту ({obj['sources']}).\n" + summary
     if text and len(A.split_claims(text)) > MAX_CLAIMS: summary += f"\nОбработаны первые {MAX_CLAIMS} пунктов — остальные пришлите отдельно."
     return paths, summary, outs
